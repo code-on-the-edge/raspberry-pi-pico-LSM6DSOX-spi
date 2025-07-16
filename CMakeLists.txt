@@ -19,9 +19,6 @@ include_directories(external/eigen)
 
 add_executable(${PROJECT_NAME}
     main.cpp
-    lsm6dsox.cpp
-    spi.cpp
-    mpu.cpp
 )
 
 # Create map, bin, extra, uf2 files
@@ -31,10 +28,7 @@ pico_add_extra_outputs(${PROJECT_NAME})
 target_link_libraries(
     ${PROJECT_NAME}
     pico_stdlib
-    pico_multicore
     hardware_spi
-    hardware_pwm
-    hardware_i2c
 )
 
 # Enable exception handling for C++
