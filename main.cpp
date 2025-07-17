@@ -1,71 +1,70 @@
-#include <stdio.h>
-#include <string.h>
-#include "pico/stdlib.h"
-#include "hardware/spi.h"
-#include "math.h"
+#include <stdio.h>           // Standard I/O library for printing to terminal
+#include <string.h>          // String manipulation functions
+#include "pico/stdlib.h"     // Raspberry Pi Pico SDK for GPIO, sleep, etc.
+#include "hardware/spi.h"    // SPI interface for communication with the sensor
+#include "math.h"            // Math functions (like atan2, sqrt, etc.)
 
-#define MISO 16
-#define CS 17
-#define SCLK 18
-#define MOSI 19
-
-#define SPI_PORT spi0
+#define MISO 16              // SPI MISO pin number
+#define CS 17                // SPI Chip Select pin number
+#define SCLK 18              // SPI Clock pin number
+#define MOSI 19              // SPI MOSI pin number
+#define SPI_PORT spi0        // SPI hardware instance used
 
 // Identification
-const uint8_t WHO_AM_I        = 0x0F;
+#define WHO_AM_I         0x0F
 
 // Control Registers
-const uint8_t CTRL1_XL        = 0x10; // Accelerometer control
-const uint8_t CTRL2_G         = 0x11; // Gyroscope control
-const uint8_t CTRL3_C         = 0x12; // Common control (BDU, IF_INC, etc.)
-const uint8_t CTRL4_C         = 0x13;
-const uint8_t CTRL5_C         = 0x14;
-const uint8_t CTRL6_C         = 0x15; // Gyro LPF
-const uint8_t CTRL7_G         = 0x16; // Gyro settings
-const uint8_t CTRL8_XL        = 0x17; // Accel filter settings
-const uint8_t CTRL9_XL        = 0x18;
-const uint8_t CTRL10_C        = 0x19;
+#define CTRL1_XL         0x10  // Accelerometer control
+#define CTRL2_G          0x11  // Gyroscope control
+#define CTRL3_C          0x12  // Common control (BDU, IF_INC, etc.)
+#define CTRL4_C          0x13
+#define CTRL5_C          0x14
+#define CTRL6_C          0x15  // Gyro LPF
+#define CTRL7_G          0x16  // Gyro settings
+#define CTRL8_XL         0x17  // Accel filter settings
+#define CTRL9_XL         0x18
+#define CTRL10_C         0x19
 
 // Status & Interrupts
-const uint8_t STATUS_REG      = 0x1E;
-const uint8_t INT1_CTRL       = 0x0D;
-const uint8_t INT2_CTRL       = 0x0E;
+#define STATUS_REG       0x1E
+#define INT1_CTRL        0x0D
+#define INT2_CTRL        0x0E
 
 // Output Registers (Gyroscope)
-const uint8_t OUTX_L_G        = 0x22;
-const uint8_t OUTX_H_G        = 0x23;
-const uint8_t OUTY_L_G        = 0x24;
-const uint8_t OUTY_H_G        = 0x25;
-const uint8_t OUTZ_L_G        = 0x26;
-const uint8_t OUTZ_H_G        = 0x27;
+#define OUTX_L_G         0x22
+#define OUTX_H_G         0x23
+#define OUTY_L_G         0x24
+#define OUTY_H_G         0x25
+#define OUTZ_L_G         0x26
+#define OUTZ_H_G         0x27
 
 // Output Registers (Accelerometer)
-const uint8_t OUTX_L_A        = 0x28;
-const uint8_t OUTX_H_A        = 0x29;
-const uint8_t OUTY_L_A        = 0x2A;
-const uint8_t OUTY_H_A        = 0x2B;
-const uint8_t OUTZ_L_A        = 0x2C;
-const uint8_t OUTZ_H_A        = 0x2D;
+#define OUTX_L_A         0x28
+#define OUTX_H_A         0x29
+#define OUTY_L_A         0x2A
+#define OUTY_H_A         0x2B
+#define OUTZ_L_A         0x2C
+#define OUTZ_H_A         0x2D
 
 // FIFO (optional)
-const uint8_t FIFO_CTRL1      = 0x07;
-const uint8_t FIFO_CTRL2      = 0x08;
-const uint8_t FIFO_CTRL3      = 0x09;
-const uint8_t FIFO_CTRL4      = 0x0A;
-const uint8_t FIFO_STATUS1    = 0x3A;
-const uint8_t FIFO_STATUS2    = 0x3B;
-const uint8_t FIFO_DATA_OUT_L = 0x3E;
-const uint8_t FIFO_DATA_OUT_H = 0x3F;
+#define FIFO_CTRL1       0x07
+#define FIFO_CTRL2       0x08
+#define FIFO_CTRL3       0x09
+#define FIFO_CTRL4       0x0A
+#define FIFO_STATUS1     0x3A
+#define FIFO_STATUS2     0x3B
+#define FIFO_DATA_OUT_L  0x3E
+#define FIFO_DATA_OUT_H  0x3F
 
-uint8_t buf_raw[12];
-int16_t accel_raw[3];
-int16_t gyro_raw[3];
-float accel[3];
-float gyro[3];
-float accel_filtered[3];
-float gyro_filtered[3];
-float ned_accel_n, ned_accel_e, ned_accel_d;
-float ned_gyro_n, ned_gyro_e, ned_gyro_d;
+uint8_t buf_raw[12];                     // Buffer for raw SPI read
+int16_t accel_raw[3];                    // Raw accelerometer values (X, Y, Z)
+int16_t gyro_raw[3];                     // Raw gyroscope values (X, Y, Z)
+float accel[3];                          // Scaled accelerometer values [g]
+float gyro[3];                           // Scaled gyroscope values [dps]
+float accel_filtered[3];                 // Low-pass filtered accel
+float gyro_filtered[3];                  // Low-pass filtered gyro
+float ned_accel_n, ned_accel_e, ned_accel_d; // NED frame acceleration (unused here)
+float ned_gyro_n, ned_gyro_e, ned_gyro_d;   // NED frame gyro (unused here)
 
 void Spi_init(spi_inst_t *spi_inst, uint8_t miso, uint8_t mosi, uint8_t sclk, uint8_t cs) {
     printf("Spi init...\n\r");
@@ -103,8 +102,11 @@ int reg_read(spi_inst_t *spi, const uint cs, const uint8_t reg, uint8_t *buf, co
     int num_bytes_read = 0;
     uint8_t mb = 0;
 
+    if (nbytes < 1) {
+        return -1;
+    }
+    
     // Construct message (set ~W bit high)
-    // uint8_t msg = 0x80 | (mb << 6) | reg;
     uint8_t msg = 0x80 | reg;
 
     // Read from register
@@ -205,12 +207,6 @@ void LSM6DSOX_read_raw() {
     // printf("accel:%.6f,%.6f,%.6f, gyro:%.6f,%.6f,%.6f\n\r", 
     //     accel[0], accel[1], accel[2], gyro[0], gyro[1], gyro[2]);
 
-    // printf("%.6f,%.6f,%.6f\n\r", 
-    //    ned_accel_n, ned_accel_e, ned_accel_d);
-
-    // printf("%.6f,%.6f,%.6f\n\r", 
-    //    ned_gyro_n, ned_gyro_e, ned_gyro_d);
-
     constexpr float alpha = 0.9f;  // smoothing factor: smaller = smoother
 
     for (int i = 0; i < 3; ++i) {
@@ -222,12 +218,6 @@ void LSM6DSOX_read_raw() {
     //    accel_filtered[0], accel_filtered[1], accel_filtered[2], 
     //    gyro_filtered[0], gyro_filtered[1], gyro_filtered[2]);
 
-    // printf("%.6f,%.6f,%.6f\n\r", 
-    //    accel_filtered[0], accel_filtered[1], accel_filtered[2]);
-
-    // printf("%.6f,%.6f,%.6f\n\r", 
-    //    gyro_filtered[0], gyro_filtered[1], gyro_filtered[2]);
-
     float ax = accel_filtered[0];  // or accel[0]
     float ay = accel_filtered[1];
     float az = accel_filtered[2];
@@ -237,34 +227,25 @@ void LSM6DSOX_read_raw() {
     float roll  = (atan2(ay, az) * RAD_TO_DEG);
     float pitch = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
 
-    // printf("Pitch: %.2f deg, Roll: %.2f deg\n\r", pitch, roll);
-
-    printf("%.6f,%.6f,%.6f\n\r", 
-       roll, pitch, 0.0);
+    printf("Pitch: %.2f deg, Roll: %.2f deg\n\r", pitch, roll);
 }
 
 int main() {
-    // Initialize stdio for debugging (optional)
-    stdio_init_all();
-    uint32_t loop_start_time;
+    stdio_init_all();                   // Initialize USB stdio (for printf)
 
-    sleep_ms(1000);
-    printf("Init...\n\r"); 
+    sleep_ms(1000);                    // Delay 1 second after power-up
 
-    Spi_init(SPI_PORT, MISO, MOSI, SCLK, CS);
+    printf("Init...\n\r");             // Debug print
+    Spi_init(SPI_PORT, MISO, MOSI, SCLK, CS); // Setup SPI pins and clock
+    LSM6DSOX_init();                          // Initialize IMU sensor
 
-    LSM6DSOX_init();
-
-    printf("Loop...\n\r"); 
-
+    uint32_t loop_start_time;          // Timestamp for timing control
     while (true) {
-        loop_start_time = time_us_32();
-
-        LSM6DSOX_read_raw();
-        // printf("Before: time: %lu\n\r", time_us_32() - loop_start_time);
-        while(time_us_32() - loop_start_time < 1000);
-        // printf("After: time: %lu\n\r", time_us_32() - loop_start_time);
+        loop_start_time = time_us_32();       // Get current microsecond time
+        LSM6DSOX_read_raw();                  // Read and process sensor data
+        while(time_us_32() - loop_start_time < 1000); // Wait to maintain 1 kHz loop
     }
 
-    return 0;
+    return 0; // This will never be reached
 }
+
