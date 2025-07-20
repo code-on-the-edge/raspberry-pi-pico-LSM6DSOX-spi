@@ -31,7 +31,7 @@
 #define INT2_CTRL        0x0E
 
 // Output Registers (Gyroscope)
-#define OUTX_L_G         0x22
+#define OUTX_L_G         0x22  // 0010 = 2, 00100010, write 1010_0010
 #define OUTX_H_G         0x23
 #define OUTY_L_G         0x24
 #define OUTY_H_G         0x25
@@ -56,22 +56,32 @@
 #define FIFO_DATA_OUT_L  0x3E
 #define FIFO_DATA_OUT_H  0x3F
 
+#define CAL_SAMPLES 5000
+
+int LSM6DSOX_init();
+void LSM6DSOX_read_raw();
+void LSM6DSOX_read();
+
 uint8_t buf_raw[12];                     // Buffer for raw SPI read
 int16_t accel_raw[3];                    // Raw accelerometer values (X, Y, Z)
 int16_t gyro_raw[3];                     // Raw gyroscope values (X, Y, Z)
 float accel[3];                          // Scaled accelerometer values [g]
 float gyro[3];                           // Scaled gyroscope values [dps]
+float accel_offset[3];                   // Scaled accelerometer values [g]
+float gyro_offset[3];                    // Scaled gyroscope values [dps]
+float accel_cal[3];                  // Scaled accelerometer values [g]
+float gyro_cal[3];                   // Scaled gyroscope values [dps]
 float accel_filtered[3];                 // Low-pass filtered accel
 float gyro_filtered[3];                  // Low-pass filtered gyro
-float ned_accel_n, ned_accel_e, ned_accel_d; // NED frame acceleration (unused here)
-float ned_gyro_n, ned_gyro_e, ned_gyro_d;   // NED frame gyro (unused here)
 
 void Spi_init(spi_inst_t *spi_inst, uint8_t miso, uint8_t mosi, uint8_t sclk, uint8_t cs) {
     printf("Spi init...\n\r");
-    spi_init(spi_inst, 4000000);  // 4 MHz (super stable)
+    spi_init(spi_inst, 10000000);  // 10 MHz (super stable)
     gpio_set_function(miso, GPIO_FUNC_SPI);
     gpio_set_function(mosi, GPIO_FUNC_SPI);
     gpio_set_function(sclk, GPIO_FUNC_SPI);
+
+    spi_set_format (spi_inst, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
 
     gpio_init(cs);
     gpio_set_dir(cs, GPIO_OUT);
@@ -118,6 +128,7 @@ int reg_read(spi_inst_t *spi, const uint cs, const uint8_t reg, uint8_t *buf, co
     return num_bytes_read;
 }
 
+
 int LSM6DSOX_init() {
     uint8_t buf[1];
     int num_bytes_read = 0;
@@ -147,43 +158,54 @@ int LSM6DSOX_init() {
     reg_read(SPI_PORT, CS, CTRL2_G, buf, 1);
     printf("CTRL2_G : 0x%02X\n\r", buf[0]);
 
-    // CTRL6_C: Gyro LPF1 @ ODR/20
-    reg_write(SPI_PORT, CS, CTRL6_C, 0b00000010);
-    reg_read(SPI_PORT, CS, CTRL6_C, buf, 1);
-    printf("CTRL6_C : 0x%02X\n\r", buf[0]);
-
-    // CTRL8_XL: Accel LPF2 @ ODR/20
-    reg_write(SPI_PORT, CS, CTRL8_XL, 0b00000010);
-    reg_read(SPI_PORT, CS, CTRL8_XL, buf, 1);
-    printf("CTRL8_XL : 0x%02X\n\r", buf[0]);
-
-    // CTRL7_G: High-performance gyro
-    reg_write(SPI_PORT, CS, CTRL7_G, 0b00000000);
-    reg_read(SPI_PORT, CS, CTRL7_G, buf, 1);
-    printf("CTRL7_G : 0x%02X\n\r", buf[0]);
-
-    // CTRL5_C: Normal mode
-    reg_write(SPI_PORT, CS, CTRL5_C, 0b00000000);
-    reg_read(SPI_PORT, CS, CTRL5_C, buf, 1);
-    printf("CTRL5_C : 0x%02X\n\r", buf[0]);
-
-    // INT1_CTRL: DRDY accel + gyro on INT1
-    reg_write(SPI_PORT, CS, INT1_CTRL, 0b00000011);
-    reg_read(SPI_PORT, CS, INT1_CTRL, buf, 1);
-    printf("INT1_CTRL : 0x%02X\n\r", buf[0]);
-
     return 0;
 }
 
-void LSM6DSOX_read_raw() {
-    constexpr float ACCEL_SENSITIVITY = 0.244f;   // [mg/LSB] for ±8g
-    constexpr float GYRO_SENSITIVITY  = 35.0f;     // [mdps/LSB] for ±1000 dps
+void LSM6DSOX_calibrate() {
 
+    printf("Calibrating...");
+
+    for (int i = 0; i < 3; i++) {
+        accel_offset[i] = 0;
+        gyro_offset[i] = 0;
+    }
+
+    for (int i = 0; i < CAL_SAMPLES; i++) {
+        LSM6DSOX_read();
+        for (int j = 0; j < 3; j++) {
+            accel_offset[j] += accel[j];
+            gyro_offset[j] += gyro[j];
+            // printf("Summing: accel_offset[%d]: %f, gyro_offset[%d]: %f\n\r", j, accel_offset[j], j, gyro_offset[j]);
+        }
+        sleep_ms(1);
+    }
+    
+    for (int i = 0; i < 3; i++) {
+        accel_offset[i] = accel_offset[i]/(float)(CAL_SAMPLES);
+        gyro_offset[i] = gyro_offset[i]/(float)(CAL_SAMPLES);
+        printf("Average: accel_offset[%d]: %f, gyro_offset[%d]: %f\n\r", i, accel_offset[i], i, gyro_offset[i]);
+    }
+
+    accel_offset[2] = accel_offset[2] - 1;
+
+    for (int i = 0; i < 3; i++) {
+        printf("Average: accel_offset[%d]: %f, gyro_offset[%d]: %f\n\r", i, accel_offset[i], i, gyro_offset[i]);
+    }
+}
+
+void LSM6DSOX_read_raw() {
     int num_bytes_read = reg_read(SPI_PORT, CS, OUTX_L_G, buf_raw, 12);
     if (num_bytes_read != 12) {
         printf("Error: LSM6DSOX_read_raw failed to read 12 bytes\n\r");
         return;
     }
+
+    // for(int i =0; i < 12; i++) {
+    //     printf("%x, ", buf_raw[i]);
+    //     if(i == 11) {
+    //         printf("%x\n\r", buf_raw[i]);
+    //     }
+    // }
 
     // Raw gyroscope data
     gyro_raw[0] = (int16_t)(buf_raw[1] << 8 | buf_raw[0]);
@@ -195,6 +217,15 @@ void LSM6DSOX_read_raw() {
     accel_raw[1] = (int16_t)(buf_raw[9]  << 8 | buf_raw[8]);
     accel_raw[2] = (int16_t)(buf_raw[11] << 8 | buf_raw[10]);
 
+    // printf("gyro_raw:%d,%d,%d, accel_raw:%d,%d,%d\n\r", gyro_raw[0], gyro_raw[1], gyro_raw[2], accel_raw[0], accel_raw[1], accel_raw[2]);
+}
+
+void LSM6DSOX_read() {
+    constexpr float ACCEL_SENSITIVITY = 0.244f;   // [mg/LSB] for ±8g
+    constexpr float GYRO_SENSITIVITY  = 35.0f;     // [mdps/LSB] for ±1000 dps
+
+    LSM6DSOX_read_raw();
+
     // Convert to physical units: [g] and [dps]
     accel[0] = (accel_raw[0] * ACCEL_SENSITIVITY) / 1000.0f;
     accel[1] = (accel_raw[1] * ACCEL_SENSITIVITY) / 1000.0f;
@@ -204,14 +235,29 @@ void LSM6DSOX_read_raw() {
     gyro[1] = (gyro_raw[1] * GYRO_SENSITIVITY) / 1000.0f;
     gyro[2] = (gyro_raw[2] * GYRO_SENSITIVITY) / 1000.0f;
 
-    // printf("accel:%.6f,%.6f,%.6f, gyro:%.6f,%.6f,%.6f\n\r", 
-    //     accel[0], accel[1], accel[2], gyro[0], gyro[1], gyro[2]);
+    // printf("accel:%.6f,%.6f,%.6f, gyro:%.6f,%.6f,%.6f\n\r", accel[0], accel[1], accel[2], gyro[0], gyro[1], gyro[2]);
+}
 
-    constexpr float alpha = 0.9f;  // smoothing factor: smaller = smoother
+void LSM6DSOX_read_calibrted() {
+
+    LSM6DSOX_read();
+
+    // Convert to physical units: [g] and [dps]
+    accel_cal[0] = accel[0] - accel_offset[0];
+    accel_cal[1] = accel[1] - accel_offset[1];
+    accel_cal[2] = accel[2] - accel_offset[2];
+
+    gyro_cal[0] = gyro[0] - gyro_offset[0];
+    gyro_cal[1] = gyro[1] - gyro_offset[1];
+    gyro_cal[2] = gyro[2] - gyro_offset[2];
+
+    // printf("accel_cal:%.6f, \t%.6f, \t%.6f,\t gyro_cal:%.6f,\t%.6f,\t%.6f\t\n\r", accel_cal[0], accel_cal[1], accel_cal[2], gyro_cal[0], gyro_cal[1], gyro_cal[2]);
+
+    constexpr float alpha = 0.1f;  // smoothing factor: smaller = smoother
 
     for (int i = 0; i < 3; ++i) {
-        accel_filtered[i] = alpha * accel[i] + (1.0f - alpha) * accel_filtered[i];
-        gyro_filtered[i]  = alpha * gyro[i]  + (1.0f - alpha) * gyro_filtered[i];
+        accel_filtered[i] = alpha * accel_cal[i] + (1.0f - alpha) * accel_filtered[i];
+        gyro_filtered[i]  = alpha * gyro_cal[i]  + (1.0f - alpha) * gyro_filtered[i];
     }
 
     // printf("filt_accel:%.6f,%.6f,%.6f, filt_gyro:%.6f,%.6f,%.6f\n\r", 
@@ -227,7 +273,50 @@ void LSM6DSOX_read_raw() {
     float roll  = (atan2(ay, az) * RAD_TO_DEG);
     float pitch = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
 
-    printf("Pitch: %.2f deg, Roll: %.2f deg\n\r", pitch, roll);
+    printf("Pitch: %.2f deg, \t\t Roll: %.2f deg\n\r", pitch, roll);
+}
+
+void LSM6DSOX_read_filtered() {
+
+    LSM6DSOX_read_calibrted();
+
+    constexpr float alpha = 0.1f;  // smoothing factor: smaller = smoother
+
+    for (int i = 0; i < 3; ++i) {
+        accel_filtered[i] = alpha * accel_cal[i] + (1.0f - alpha) * accel_filtered[i];
+        gyro_filtered[i]  = alpha * gyro_cal[i]  + (1.0f - alpha) * gyro_filtered[i];
+    }
+
+    // printf("filt_accel:%.6f,%.6f,%.6f, filt_gyro:%.6f,%.6f,%.6f\n\r", 
+    //    accel_filtered[0], accel_filtered[1], accel_filtered[2], 
+    //    gyro_filtered[0], gyro_filtered[1], gyro_filtered[2]);
+
+    float ax = accel_filtered[0];  // or accel[0]
+    float ay = accel_filtered[1];
+    float az = accel_filtered[2];
+
+    constexpr float RAD_TO_DEG = 57.2958f;
+
+    float roll  = (atan2(ay, az) * RAD_TO_DEG);
+    float pitch = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
+
+    printf("Pitch: %.2f deg, \t\t Roll: %.2f deg\n\r", pitch, roll);
+}
+
+void LSM6DSOX_read_angle() {
+
+    LSM6DSOX_read_filtered();
+
+    float ax = accel_filtered[0];  // or accel[0]
+    float ay = accel_filtered[1];
+    float az = accel_filtered[2];
+
+    constexpr float RAD_TO_DEG = 57.2958f;
+
+    float roll  = (atan2(ay, az) * RAD_TO_DEG);
+    float pitch = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
+
+    printf("Pitch: %.2f deg, \t\t Roll: %.2f deg\n\r", pitch, roll);
 }
 
 int main() {
@@ -239,11 +328,16 @@ int main() {
     Spi_init(SPI_PORT, MISO, MOSI, SCLK, CS); // Setup SPI pins and clock
     LSM6DSOX_init();                          // Initialize IMU sensor
 
+    LSM6DSOX_calibrate();
+
     uint32_t loop_start_time;          // Timestamp for timing control
     while (true) {
         loop_start_time = time_us_32();       // Get current microsecond time
-        LSM6DSOX_read_raw();                  // Read and process sensor data
+        // LSM6DSOX_read_raw();                  // Read and process sensor data
+        LSM6DSOX_read_calibrted();
+        // printf("Before: %d\n\r", time_us_32() - loop_start_time);             // Debug print
         while(time_us_32() - loop_start_time < 1000); // Wait to maintain 1 kHz loop
+        // printf("After: %d\n\r", time_us_32() - loop_start_time); 
     }
 
     return 0; // This will never be reached
