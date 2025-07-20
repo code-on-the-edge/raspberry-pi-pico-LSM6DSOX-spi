@@ -58,9 +58,17 @@
 
 #define CAL_SAMPLES 5000
 
+void Spi_init(spi_inst_t *spi_inst, uint8_t miso, uint8_t mosi, uint8_t sclk, uint8_t cs);
+void reg_write(spi_inst_t *spi, const uint cs, const uint8_t reg, const uint8_t data);
+int reg_read(spi_inst_t *spi, const uint cs, const uint8_t reg, uint8_t *buf, const uint8_t nbytes);
+
 int LSM6DSOX_init();
+void LSM6DSOX_calibrate();
 void LSM6DSOX_read_raw();
 void LSM6DSOX_read();
+void LSM6DSOX_read_calibrted();
+void LSM6DSOX_read_filtered();
+void LSM6DSOX_read_angle();
 
 uint8_t buf_raw[12];                     // Buffer for raw SPI read
 int16_t accel_raw[3];                    // Raw accelerometer values (X, Y, Z)
