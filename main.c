@@ -88,7 +88,7 @@ void Spi_init(spi_inst_t *spi_inst, uint8_t miso, uint8_t mosi, uint8_t sclk, ui
     gpio_put(cs, 1);         // Set CS high (not selected by default)
 
     // Print configured pin numbers for confirmation
-    printf("Spi_init: miso: %d, mosi: %d, sclk: %d, cs: %d\n\r", MISO, MOSI, SCLK, CS);
+    printf("SPI pins: miso: %d, mosi: %d, sclk: %d, cs: %d\n\r", MISO, MOSI, SCLK, CS);
 }
 
 
@@ -348,7 +348,7 @@ int main() {
 
             LSM6DSOX_read_calibrted();  // Read sensor data and apply calibration offsets
 
-            sleep_ms(100);  // Delay for 100 ms between samples (~10 Hz read rate)
+            sleep_ms(100);  // Delay between samples
         }
     }
 
