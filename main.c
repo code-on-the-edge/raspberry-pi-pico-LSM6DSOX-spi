@@ -1,4 +1,4 @@
-#include <stdio.h>           // Standard I/O library for printing to terminal
+#include "stdio.h"           // Standard I/O library for printing to terminal
 #include "pico/stdlib.h"     // Raspberry Pi Pico SDK for GPIO, sleep, etc.
 #include "hardware/spi.h"    // SPI interface for communication with the sensor
 
