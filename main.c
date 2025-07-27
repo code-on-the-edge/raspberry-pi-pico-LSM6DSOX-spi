@@ -1,7 +1,6 @@
 #include <stdio.h>           // Standard I/O library for printing to terminal
 #include "pico/stdlib.h"     // Raspberry Pi Pico SDK for GPIO, sleep, etc.
 #include "hardware/spi.h"    // SPI interface for communication with the sensor
-#include "math.h"            // Math functions (like atan2, sqrt, etc.)
 
 #define MISO 16                 // SPI MISO pin number
 #define CS 17                   // SPI Chip Select pin number
